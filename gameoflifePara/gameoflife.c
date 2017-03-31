@@ -1,0 +1,234 @@
+#include <endian.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include <string.h>
+#include <stdbool.h>
+#include <math.h>
+#include <sys/time.h>
+#include <omp.h>
+
+#define calcIndex(width, x,y)  ((y)*(width) + (x))
+
+#ifndef max
+	#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
+#endif
+
+#ifndef min
+	#define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
+#endif
+
+long TimeSteps = 100;
+
+void writeVTK2(long timestep, double *data, char prefix[1024], long w, long h) {
+  char filename[2048];  
+  int x,y; 
+  
+  long offsetX=0;
+  long offsetY=0;
+  float deltax=1.0;
+  float deltay=1.0;
+  long  nxy = w * h * sizeof(float);  
+
+  snprintf(filename, sizeof(filename), "%s-%05ld%s", prefix, timestep, ".vti");
+  FILE* fp = fopen(filename, "w");
+
+  fprintf(fp, "<?xml version=\"1.0\"?>\n");
+  fprintf(fp, "<VTKFile type=\"ImageData\" version=\"0.1\" byte_order=\"LittleEndian\" header_type=\"UInt64\">\n");
+  fprintf(fp, "<ImageData WholeExtent=\"%d %d %d %d %d %d\" Origin=\"0 0 0\" Spacing=\"%le %le %le\">\n", offsetX, offsetX + w, offsetY, offsetY + h, 0, 0, deltax, deltax, 0.0);
+  fprintf(fp, "<CellData Scalars=\"%s\">\n", prefix);
+  fprintf(fp, "<DataArray type=\"Float32\" Name=\"%s\" format=\"appended\" offset=\"0\"/>\n", prefix);
+  fprintf(fp, "</CellData>\n");
+  fprintf(fp, "</ImageData>\n");
+  fprintf(fp, "<AppendedData encoding=\"raw\">\n");
+  fprintf(fp, "_");
+  fwrite((unsigned char*)&nxy, sizeof(long), 1, fp);
+
+  for (y = 0; y < h; y++) {
+    for (x = 0; x < w; x++) {
+      float value = data[calcIndex(h, x,y)];
+      fwrite((unsigned char*)&value, sizeof(float), 1, fp);
+    }
+  }
+  
+  fprintf(fp, "\n</AppendedData>\n");
+  fprintf(fp, "</VTKFile>\n");
+  fclose(fp);
+}
+
+
+void show(double* currentfield, int w, int h) {
+  printf("\033[H");
+  int x,y;
+  for (y = 0; y < h ; y++) {
+    for (x = 0; x < w ; x++) printf(currentfield[calcIndex(w, x,y)] ? "\033[07m  \033[m" : "  ");
+    //printf("\033[E");
+    printf("\n");
+  }
+  fflush(stdout);
+}
+bool isFilled(double* currentField,int index){
+	if(currentField[index] == 1){
+		return true;
+	}
+	return false;
+	
+}
+
+void fill(double* currentField,int index){
+	currentField[index] = 1;
+}
+void kill(double* currentField,int index){
+	currentField[index] = 0;
+}
+int getNeighborCount(double* currentField,int x, int y, int w, int h){
+	int count = 0;
+	for(int i = -1; i <= +1; i++){
+		for(int j = -1;  j <= +1; j++){
+			count += currentField[calcIndex(w,x-i,y-j)];
+		}
+	}
+	count -= currentField[calcIndex(w,x,y)];
+	return count;
+} 
+
+void handleBorders(double* currentfield, int w, int h){
+	//top	
+	for(int i=1; i<w-1;i++){
+		currentfield[i] = currentfield[calcIndex(w,i,h-2)]; 
+	}
+	//bot
+	 for(int x = 1; x < w-1; x++) {
+		currentfield[calcIndex(w,x,h-1)] = currentfield[calcIndex(w,x,1)];
+            }
+	//left
+	for(int i=calcIndex(w,0,1); i<calcIndex(w,0,h-1);i=i+w){
+		currentfield[i] = currentfield[i+(w-2)]; 
+	}
+	//right
+	for(int i=calcIndex(w,w-1,0); i<calcIndex(w,w-1,h-1);i=i+w){
+		currentfield[i] = currentfield[i-(w-2)]; 
+	}
+	currentfield[0] = currentfield[calcIndex(w,w-2,h-2)];
+	currentfield[w-1] = currentfield[calcIndex(w,1,h-2)];
+	currentfield[calcIndex(w,0,h-1)] = currentfield[calcIndex(w,w-2,1)];
+	currentfield[calcIndex(w,w-1,h-1)] = currentfield[calcIndex(w,1,1)];
+}
+
+void evolve(double* currentfield, double* newfield, int w, int h) {
+  int x,y;
+  #pragma omp parallel for collapse(2)
+  for (y = 1; y < h; y++) {
+    for (x = 1; x < w; x++) {
+      int index = calcIndex(w, x,y);
+      bool filled = isFilled(currentfield,index);
+      int count = getNeighborCount(currentfield,x,y, w, h);
+	//if(count > 0) printf("%d | %d %d \n",count,x,y);
+	//if(filled) printf("%d | %d %d \n",count,x,y);
+      if(!filled){
+		if(count==3){
+			fill(newfield,index);
+		}else{
+			kill(newfield,index);
+		}
+      }else{
+      		if(count < 2 || count > 3){
+			kill(newfield,index);
+		}else{
+			fill(newfield,index);
+		}
+      }
+    }
+  }
+}
+ 
+void filling(double* currentfield, int w, int h) {
+  //int i;
+  //for (i = 0; i < h*w; i++) {
+   // currentfield[i] = (rand() < RAND_MAX / 10) ? 1 : 0; ///< init domain randomly
+  //}
+	/*currentfield[250] = 1;
+	currentfield[251] = 1;
+	currentfield[252] = 1;
+
+
+	currentfield[260] = 1;
+	currentfield[261] = 1;
+	currentfield[290] = 1;
+	currentfield[291] = 1;*/
+loadFile(currentfield,w,h);
+	
+}
+
+void loadFile(double* currentfield, int w ,int h){
+	int i;
+    	int fieldCounter = w+2;
+    	FILE *f1 = fopen("./field.txt", "r");
+    	fseek(f1, 0, SEEK_END);
+    	int inputsize = ftell(f1);
+    	printf("InputSize: %d ", inputsize);
+    	char *input1 = calloc(inputsize, sizeof(char));
+    	fseek(f1,0,SEEK_SET);
+    	for(i = 0; i < inputsize; i++){
+		if(fieldCounter %w==0){
+		//if(input1[i] == '\n'){
+			fieldCounter +=2;
+			//printf("%d | %d | %d \n",fieldCounter,i, input1[i]);
+		}
+
+		fscanf(f1, "%c", &input1[i]);
+              	if(input1[i] == '0'){
+                        	currentfield[fieldCounter] = 0;
+                               	fieldCounter++;
+                }
+		if(input1[i] == '1'){
+                               currentfield[fieldCounter] = 1;
+                               fieldCounter++;
+                
+		}
+		
+    	}
+
+} 
+
+ 
+void game(int w, int h) {
+  w +=2;
+  h +=2;
+  double *currentfield = calloc(w*h, sizeof(double));
+  double *newfield     = calloc(w*h, sizeof(double));
+  
+  //#printf("size unsigned %d, size long %d\n",sizeof(float), sizeof(long));
+	
+  filling(currentfield, w, h);
+
+  long t;
+  for (t=0;t<TimeSteps;t++) {   
+    handleBorders(currentfield,w,h);
+    show(currentfield, w, h);
+    evolve(currentfield, newfield, w, h);
+    printf("%ld timestep\n",t);
+    writeVTK2(t,currentfield,"gol", w, h);
+    //break;
+    usleep(200000);
+
+    //SWAP
+    double *temp = currentfield;
+    currentfield = newfield;
+    newfield = temp;
+  }
+  
+  free(currentfield);
+  free(newfield);
+  
+}
+ 
+int main(int c, char **v) {
+  int w = 0, h = 0;
+  if (c > 1) w = atoi(v[1]); ///< read width
+  if (c > 2) h = atoi(v[2]); ///< read height
+  if (w <= 0) w = 30; ///< default width
+  if (h <= 0) h = 30; ///< default height
+  game(w, h);
+}
