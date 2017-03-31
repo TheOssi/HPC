@@ -7,7 +7,7 @@
 #include <stdbool.h>
 #include <math.h>
 #include <sys/time.h>
-#include "mpi.h"
+#include <mpi.h>
 
 #define calcIndex(width, x,y)  ((y)*(width) + (x))
 
@@ -167,7 +167,7 @@ void game(int w, int h) {
   long t;
   for (t=0;t<TimeSteps;t++) {
     //show(currentfield, w, h);
-    
+    break;
     evolve(currentfield, newfield, w, h);
     
     printf("%ld timestep\n",t);
@@ -181,20 +181,41 @@ void game(int w, int h) {
     newfield = temp;
   }
   
-  free(currentfield);
-  free(newfield);
+  //free(currentfield);
+  //free(newfield);
   
 }
  
 int main(int c, char **v) {
-  //MPI Initialization
-  //MPI_Status status;
-  //MPI_Init(&c, &v);
-  printf("passed");
+  int rank, size,source,dest;
+  MPI_Comm comm;
+  int dim[2], period[2], reorder;
+  int coord[2];
+	
+  MPI_Status status;
+  MPI_Init( &c, &v );
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  dim[0] = size/2;
+  dim[1] = size/2;
+  period[0] = 1;
+  reorder= 1;
+
+  MPI_Cart_create(MPI_COMM_WORLD, 1, dim, period, reorder, &comm);
+
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+  MPI_Cart_coords(comm, rank, 2, coord);
+  printf("Rank %d coordinates are %d %d\n", rank, coord[0], coord[1]);
+
+  MPI_Cart_shift(comm, 1, 1, &source, &dest);
+
+  printf("%d | %d | %d\n", source,rank, dest);
+
   int w = 0, h = 0;
   if (c > 1) w = atoi(v[1]); ///< read width
   if (c > 2) h = atoi(v[2]); ///< read height
   if (w <= 0) w = WidthHeight; ///< default width
   if (h <= 0) h = WidthHeight; ///< default height
+MPI_Finalize();
   game(w, h);
 }
